@@ -13,10 +13,11 @@ import (
 )
 
 type options struct {
-	config    tree.Config
-	colorMode tree.ColorMode
-	help      bool
-	version   bool
+	config        tree.Config
+	colorMode     tree.ColorMode
+	animationMode tree.AnimationMode
+	help          bool
+	version       bool
 }
 
 func Main(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -42,7 +43,9 @@ func Main(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	if err := tree.Render(stdout, root, stats, tree.RenderConfig{
-		Color: shouldColor(stdout, opts.colorMode),
+		Color:          shouldColor(stdout, opts.colorMode),
+		Animate:        shouldAnimate(stdout, opts.animationMode),
+		AnimationDelay: tree.DefaultAnimationDelay,
 	}); err != nil {
 		fmt.Fprintf(stderr, "l: %s\n", err)
 		return 1
@@ -57,7 +60,8 @@ func parseArgs(args []string) (options, error) {
 			MaxDepth:          2,
 			UseDefaultIgnores: true,
 		},
-		colorMode: tree.ColorAuto,
+		colorMode:     tree.ColorAuto,
+		animationMode: tree.AnimationAuto,
 	}
 	var paths []string
 
@@ -70,6 +74,8 @@ func parseArgs(args []string) (options, error) {
 			opts.version = true
 		case arg == "-a" || arg == "--all":
 			opts.config.ShowHidden = true
+		case arg == "-f" || arg == "--files":
+			opts.config.FilesOnly = true
 		case arg == "-d" || arg == "--depth" || arg == "--level":
 			if i+1 >= len(args) {
 				return opts, fmt.Errorf("%s requires a depth", arg)
@@ -105,6 +111,24 @@ func parseArgs(args []string) (options, error) {
 			opts.colorMode = mode
 		case arg == "--no-color":
 			opts.colorMode = tree.ColorNever
+		case arg == "--animate":
+			if i+1 >= len(args) {
+				return opts, errors.New("--animate requires auto, always, or never")
+			}
+			mode, err := parseAnimationMode(args[i+1])
+			if err != nil {
+				return opts, err
+			}
+			opts.animationMode = mode
+			i++
+		case strings.HasPrefix(arg, "--animate="):
+			mode, err := parseAnimationMode(strings.TrimPrefix(arg, "--animate="))
+			if err != nil {
+				return opts, err
+			}
+			opts.animationMode = mode
+		case arg == "--no-animate":
+			opts.animationMode = tree.AnimationNever
 		case arg == "--no-ignore":
 			opts.config.UseDefaultIgnores = false
 		case arg == "--ignore":
@@ -154,6 +178,15 @@ func parseColorMode(value string) (tree.ColorMode, error) {
 	}
 }
 
+func parseAnimationMode(value string) (tree.AnimationMode, error) {
+	switch tree.AnimationMode(value) {
+	case tree.AnimationAuto, tree.AnimationAlways, tree.AnimationNever:
+		return tree.AnimationMode(value), nil
+	default:
+		return tree.AnimationAuto, errors.New("--animate must be auto, always, or never")
+	}
+}
+
 func appendIgnores(existing []string, value string) []string {
 	for _, part := range strings.Split(value, ",") {
 		part = strings.TrimSpace(part)
@@ -171,16 +204,31 @@ func shouldColor(out io.Writer, mode tree.ColorMode) bool {
 	case tree.ColorNever:
 		return false
 	default:
-		file, ok := out.(*os.File)
-		if !ok {
-			return false
-		}
-		info, err := file.Stat()
-		if err != nil {
-			return false
-		}
-		return info.Mode()&os.ModeCharDevice != 0
+		return isTerminal(out)
 	}
+}
+
+func shouldAnimate(out io.Writer, mode tree.AnimationMode) bool {
+	switch mode {
+	case tree.AnimationAlways:
+		return true
+	case tree.AnimationNever:
+		return false
+	default:
+		return isTerminal(out) && os.Getenv("TERM") != "dumb"
+	}
+}
+
+func isTerminal(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func writeHelp(out io.Writer) {
@@ -191,11 +239,14 @@ Usage:
 
 Flags:
   -a, --all              include hidden files and directories
+  -f, --files            show text files only; hide binaries and empty dirs
   -d, --depth <n|*>      max tree depth from root, or * for unlimited (default 2)
       --ignore <pattern> add a basename or glob ignore; repeat or comma-separate
       --no-ignore        disable default dependency/cache/build ignores
       --color <mode>     auto, always, or never (default auto)
       --no-color         disable color
+      --animate <mode>   auto, always, or never (default auto)
+      --no-animate       disable tree animation
   -h, --help             show this help
       --version          show version
 

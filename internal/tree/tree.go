@@ -22,6 +22,7 @@ type Config struct {
 	Root              string
 	MaxDepth          int
 	ShowHidden        bool
+	FilesOnly         bool
 	UseDefaultIgnores bool
 	ExtraIgnores      []string
 }
@@ -36,8 +37,12 @@ type Node struct {
 }
 
 type Stats struct {
-	MaxTextLines  int
-	MaxBinarySize int64
+	TextFileCount   int
+	MinTextLines    int
+	MaxTextLines    int
+	BinaryFileCount int
+	MinBinarySize   int64
+	MaxBinarySize   int64
 }
 
 var defaultIgnoredDirs = map[string]struct{}{
@@ -93,6 +98,9 @@ func Build(cfg Config) (*Node, Stats, error) {
 		if err := walkChildren(node, 0, cfg); err != nil {
 			return nil, Stats{}, err
 		}
+	}
+	if cfg.FilesOnly && !pruneFilesOnly(node) {
+		return nil, Stats{}, nil
 	}
 
 	var stats Stats
@@ -181,6 +189,26 @@ func walkChildren(parent *Node, depth int, cfg Config) error {
 	return nil
 }
 
+func pruneFilesOnly(node *Node) bool {
+	switch node.Type {
+	case TypeFile:
+		return true
+	case TypeBinary:
+		return false
+	case TypeDirectory:
+		kept := node.Children[:0]
+		for _, child := range node.Children {
+			if pruneFilesOnly(child) {
+				kept = append(kept, child)
+			}
+		}
+		node.Children = kept
+		return len(node.Children) > 0
+	default:
+		return false
+	}
+}
+
 func shouldSkip(name string, isDir bool, cfg Config) bool {
 	if !cfg.ShowHidden && strings.HasPrefix(name, ".") {
 		return true
@@ -255,10 +283,18 @@ func analyzeFile(path string) (int, bool, error) {
 func collectStats(node *Node, stats *Stats) {
 	switch node.Type {
 	case TypeFile:
+		stats.TextFileCount++
+		if stats.TextFileCount == 1 || node.Lines < stats.MinTextLines {
+			stats.MinTextLines = node.Lines
+		}
 		if node.Lines > stats.MaxTextLines {
 			stats.MaxTextLines = node.Lines
 		}
 	case TypeBinary:
+		stats.BinaryFileCount++
+		if stats.BinaryFileCount == 1 || node.Size < stats.MinBinarySize {
+			stats.MinBinarySize = node.Size
+		}
 		if node.Size > stats.MaxBinarySize {
 			stats.MaxBinarySize = node.Size
 		}
