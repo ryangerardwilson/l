@@ -39,9 +39,11 @@ install_latest() {
   require_command git
   local tmp_dir
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/${APP}_install_XXXXXX")"
-  trap 'rm -rf "$tmp_dir"' EXIT
+  trap 'rm -rf "$tmp_dir"' RETURN
   git clone --depth 1 "$REPO_URL" "$tmp_dir/$APP" >/dev/null
   install_from_source "$tmp_dir/$APP"
+  trap - RETURN
+  rm -rf "$tmp_dir"
 }
 
 case "${1:-install}" in
